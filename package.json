@@ -1,0 +1,36 @@
+{
+  "name": "snaplogic-pipeline-explorer",
+  "version": "1.0.0",
+  "description": "Chrome extension for enhanced SnapLogic pipeline navigation",
+  "main": "content.js",
+  "scripts": {
+    "build": "echo 'Extension is ready for Chrome - no build step required'",
+    "package": "node scripts/package.js",
+    "dev": "echo 'Load extension in Chrome at chrome://extensions/ in Developer Mode'"
+  },
+  "keywords": [
+    "chrome-extension",
+    "snaplogic",
+    "pipeline",
+    "developer-tools",
+    "productivity"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {},
+  "files": [
+    "manifest.json",
+    "content.js",
+    "popup.html",
+    "popup.js",
+    "styles.css",
+    "icons/"
+  ],
+  "engines": {
+    "chrome": ">=88"
+  },
+  "repository": {
+    "type": "git",
+    "url": "your-repo-url"
+  }
+}

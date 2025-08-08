@@ -1,0 +1,15 @@
+/* SnapLogic Pipeline Explorer Styles */
+/* All styles are implemented inline in the content script for better encapsulation */
+/* This file can be used for additional global styles if needed */
+
+/* Extension-specific global styles */
+#pipeline-sidebar {
+    /* Ensure the sidebar doesn't interfere with existing page styles */
+    all: initial;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Reset for child elements */
+#pipeline-sidebar * {
+    box-sizing: border-box;
+}

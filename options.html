@@ -1,0 +1,152 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SnapLogic Pipeline Explorer</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; }
+    input { width: 100%; padding: 8px; margin-top: 10px; box-sizing: border-box; }
+    button { margin-top: 10px; padding: 8px 12px; cursor: pointer; }
+    button:hover { background-color: #f0f0f0; }
+    #status { margin-top: 10px; font-weight: bold; }
+    .info { background-color: #e7f3ff; padding: 10px; border-left: 4px solid #2196F3; margin: 10px 0; }
+    hr { margin: 20px 0; }
+  </style>
+</head>
+<body>
+  <h2>SnapLogic Pipeline Explorer</h2>
+  <p>Adds a sidebar showing open SnapLogic pipelines with grouping, search, and collapsible sections</p>
+  <hr>
+  <h2>Settings</h2>
+  <div class="info">
+    <strong>URL Pattern Configuration:</strong><br>
+    Set the URL pattern where the extension will be active. Use * as wildcards.<br>
+    Examples: https://*.snaplogic.com/*, https://mycompany.snaplogic.com/*
+  </div>
+  <label for="patternInput">Custom Match Pattern:</label>
+  <input type="text" id="patternInput" placeholder="e.g. https://*.snaplogic.com/*">
+  <button id="savePattern">Save</button>
+  <p id="status"></p>
+  <div class="info">
+    <strong>Note:</strong> You may need to reload the extension or refresh pages for changes to take effect.
+  </div>
+  <hr>
+  <h2>Emoji Customization</h2>
+  <div class="info">
+    <strong>Default Emoji Set:</strong><br>
+    Customize the emojis that appear in the emoji picker. Separate emojis with spaces.<br>
+    You can use any Unicode emojis or characters.
+  </div>
+  <label for="emojiInput">Custom Emoji Set:</label>
+  <input type="text" id="emojiInput" placeholder="• 🔧 ⚙️ 🚧 ⚒️ 💡 ⭐ 🔥 ❄️ 🔍 ✏️ ⏲ ⌛ 💩 👽 ☠️">
+  <button id="saveEmojis">Save Emojis</button>
+  <button id="resetEmojis" style="margin-left: 10px;">Reset to Default</button>
+  <p id="emojiStatus"></p>
+  
+  <hr>
+  <h2>Interface Behavior</h2>
+  <div class="info">
+    <strong>Dock Position:</strong><br>
+    Choose where the sidebar should dock when using the dock button.
+  </div>
+  <label for="dockPosition">Default Dock Position:</label>
+  <select id="dockPosition" style="width: 100%; padding: 8px; margin-top: 10px;">
+    <option value="bottom-right">Bottom Right</option>
+    <option value="bottom-left">Bottom Left</option>
+  </select>
+  <button id="saveDockPosition">Save</button>
+  <p id="dockStatus"></p>
+  
+  <div class="info" style="margin-top: 15px;">
+    <strong>Undock Behavior:</strong><br>
+    Choose whether the sidebar should be expanded or minimized when restored from dock position.
+  </div>
+  <label for="undockBehavior">Undock State:</label>
+  <select id="undockBehavior" style="width: 100%; padding: 8px; margin-top: 10px;">
+    <option value="expanded">Expanded (show all content)</option>
+    <option value="minimized">Minimized (header only)</option>
+    <option value="remember">Remember previous state</option>
+  </select>
+  <button id="saveUndockBehavior">Save</button>
+  <p id="undockStatus"></p>
+  
+  <script src="options.js"></script>
+  <hr>
+  <h2 id="highlighting-section">Search Highlighting</h2>
+  <div class="info">
+    <strong>Customize Search Highlights:</strong><br>
+    Configure how search results are highlighted in the pipeline canvas.
+  </div>
+  
+  <h3>Color Scheme</h3>
+  <label for="colorScheme">Highlight Style:</label>
+  <select id="colorScheme" style="width: 100%; padding: 8px; margin-top: 10px;">
+    <option value="yellow">Classic Yellow (Gold/Orange)</option>
+    <option value="highContrast">High Contrast (Black outline, bright yellow)</option>
+    <option value="neon">Neon (Cyan/Magenta)</option>
+    <option value="subtle">Subtle (Light gray)</option>
+    <option value="custom">Custom Colors</option>
+  </select>
+  
+  <div id="customColors" style="display: none; margin-top: 15px;">
+    <div style="display: flex; gap: 15px; align-items: center; margin-bottom: 10px;">
+      <div>
+        <label for="fillColor">Fill Color:</label><br>
+        <input type="color" id="fillColor" value="#FFD700" style="width: 60px; height: 30px;">
+      </div>
+      <div>
+        <label for="strokeColor">Border Color:</label><br>
+        <input type="color" id="strokeColor" value="#FFA500" style="width: 60px; height: 30px;">
+      </div>
+      <div>
+        <label for="activeFillColor">Active Fill:</label><br>
+        <input type="color" id="activeFillColor" value="#FF4444" style="width: 60px; height: 30px;">
+      </div>
+      <div>
+        <label for="activeStrokeColor">Active Border:</label><br>
+        <input type="color" id="activeStrokeColor" value="#CC0000" style="width: 60px; height: 30px;">
+      </div>
+    </div>
+  </div>
+  
+  <h3>Shape Options</h3>
+  <label for="highlightShape">Highlight Shape:</label>
+  <select id="highlightShape" style="width: 100%; padding: 8px; margin-top: 10px;">
+    <option value="rounded-rectangle">Rounded Rectangle</option>
+    <option value="square">Square</option>
+    <option value="circle">Circle</option>
+  </select>
+  
+  <h3>Size & Animation</h3>
+  <label for="highlightSize">Highlight Size:</label>
+  <select id="highlightSize" style="width: 100%; padding: 8px; margin-top: 10px;">
+    <option value="tight">Tight (4px padding)</option>
+    <option value="normal">Normal (8px padding)</option>
+    <option value="loose">Loose (12px padding)</option>
+  </select>
+  
+  <label for="animationType">Animation:</label>
+  <select id="animationType" style="width: 100%; padding: 8px; margin-top: 10px;">
+    <option value="none">Static (No animation)</option>
+    <option value="pulse">Gentle Pulse</option>
+    <option value="glow">Soft Glow</option>
+    <option value="blink">Attention Blink</option>
+  </select>
+  
+  <div style="margin-top: 15px;">
+    <button id="saveHighlighting">Save Highlighting Settings</button>
+    <button id="resetHighlighting" style="margin-left: 10px;">Reset to Default</button>
+    <button id="previewHighlighting" style="margin-left: 10px; background-color: #e7f3ff;">Preview</button>
+  </div>
+  <p id="highlightingStatus"></p>
+  
+  <hr>
+  <h2>Contact info</h2>
+  <p>Author: Mateusz Szczesniak - MeteorIT</p>
+  <a href="mailto:meteorit@mixbox.pl">Email</a>
+ <!-- <br>
+  <a href="tobeadded">Website</a>
+-->
+</body>
+</html>
