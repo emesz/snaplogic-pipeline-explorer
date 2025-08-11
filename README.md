@@ -14,6 +14,8 @@ meteorit@mixbox.pl
   - Search and grouping
   - Resizable interface
   - Persistent settings
+## v1.0
+  - added fix for storing minimized state in the chrome cache
 
 # Features
 

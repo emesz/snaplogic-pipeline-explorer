@@ -1498,6 +1498,47 @@
             // Ignore errors, localStorage fallback is already in place
         });
 
+        // Load minimized state from chrome storage in background and sync to localStorage
+        getSetting(TOGGLE_KEY, null).then(chromeMinimizedState => {
+            if (chromeMinimizedState && chromeMinimizedState !== localStorage.getItem(TOGGLE_KEY)) {
+                localStorage.setItem(TOGGLE_KEY, chromeMinimizedState);
+                // Update current sidebar minimized state if it exists
+                const currentSidebar = document.getElementById(SIDEBAR_ID);
+                if (currentSidebar) {
+                    const content = document.getElementById('pipeline-sidebar-content');
+                    const tabSwitcher = currentSidebar.querySelector('[style*="display: flex; background: #f1f3f4"]');
+                    const expandCollapseContainer = currentSidebar.querySelector('[style*="background: #f8f9fa"]');
+                    const searchBox = currentSidebar.querySelector('input[type="text"]');
+                    const toggleBtn = currentSidebar.querySelector('[title*="Minimize"], [title*="Expand"]');
+                    
+                    if (content && tabSwitcher && searchBox && toggleBtn) {
+                        const shouldBeMinimized = chromeMinimizedState === 'true';
+                        if (shouldBeMinimized) {
+                            tabSwitcher.style.display = 'none';
+                            if (expandCollapseContainer) expandCollapseContainer.style.display = 'none';
+                            searchBox.style.display = 'none';
+                            content.style.display = 'none';
+                            toggleBtn.textContent = '+';
+                            toggleBtn.title = 'Expand';
+                        } else {
+                            tabSwitcher.style.display = 'flex';
+                            if (expandCollapseContainer) {
+                                const currentView = localStorage.getItem(VIEW_KEY) || 'flat';
+                                expandCollapseContainer.style.display = currentView === 'project' ? 'flex' : 'none';
+                            }
+                            searchBox.style.display = 'block';
+                            content.style.display = 'block';
+                            toggleBtn.textContent = '–';
+                            toggleBtn.title = 'Minimize';
+                        }
+                        console.log('Synced minimized state from chrome.storage to localStorage and updated UI');
+                    }
+                }
+            }
+        }).catch(() => {
+            // Ignore errors, localStorage fallback is already in place
+        });
+
         const header = document.createElement('div');
         header.style = `
             font-weight: 600;
@@ -1697,6 +1738,8 @@
                         toggleBtn.textContent = '−';
                         toggleBtn.title = 'Minimize';
                         localStorage.setItem(TOGGLE_KEY, 'false');
+                        // Sync to chrome.storage
+                        setSetting(TOGGLE_KEY, 'false').catch(() => {});
                     } else if (undockBehavior === 'minimized') {
                         // Always minimize when undocking
                         tabSwitcher.style.display = 'none';
@@ -1706,6 +1749,8 @@
                         toggleBtn.textContent = '+';
                         toggleBtn.title = 'Expand';
                         localStorage.setItem(TOGGLE_KEY, 'true');
+                        // Sync to chrome.storage
+                        setSetting(TOGGLE_KEY, 'true').catch(() => {});
                     } else if (undockBehavior === 'remember') {
                         // Restore pre-dock state
                         const previousState = JSON.parse(localStorage.getItem(PREVIOUS_STATE_KEY) || '{}');
@@ -1719,6 +1764,8 @@
                             toggleBtn.textContent = '+';
                             toggleBtn.title = 'Expand';
                             localStorage.setItem(TOGGLE_KEY, 'true');
+                            // Sync to chrome.storage
+                            setSetting(TOGGLE_KEY, 'true').catch(() => {});
                         } else {
                             tabSwitcher.style.display = 'flex';
                             expandCollapseContainer.style.display = currentView === 'project' ? 'flex' : 'none';
@@ -1727,6 +1774,8 @@
                             toggleBtn.textContent = '−';
                             toggleBtn.title = 'Minimize';
                             localStorage.setItem(TOGGLE_KEY, 'false');
+                            // Sync to chrome.storage
+                            setSetting(TOGGLE_KEY, 'false').catch(() => {});
                         }
                     }
                 });
@@ -1768,6 +1817,8 @@
                 toggleBtn.textContent = '+';
                 toggleBtn.title = 'Expand';
                 localStorage.setItem(TOGGLE_KEY, 'true');
+                // Sync to chrome.storage
+                setSetting(TOGGLE_KEY, 'true').catch(() => {});
                 
                 // Get dock position preference from chrome storage
                 chrome.storage.sync.get(['dockPosition'], (result) => {
@@ -1870,7 +1921,13 @@
                 toggleBtn.title = 'Expand';
             }
             
-            localStorage.setItem(TOGGLE_KEY, (!minimized).toString());
+            const newMinimizedState = (!minimized).toString();
+            localStorage.setItem(TOGGLE_KEY, newMinimizedState);
+            
+            // Sync to chrome.storage for persistence across sessions
+            setSetting(TOGGLE_KEY, newMinimizedState).catch(() => {
+                // Ignore errors, localStorage is already updated
+            });
         };
 
         const collapsedGroups = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}');
