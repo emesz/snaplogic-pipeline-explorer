@@ -14,8 +14,13 @@ meteorit@mixbox.pl
   - Search and grouping
   - Resizable interface
   - Persistent settings
-## v1.0
+## v1.1
   - added fix for storing minimized state in the chrome cache
+
+## v1.2
+  - added close pipeline tab functionality in Flat View - right-click context menu 
+  - added button to the extension popup to reset Pipeline Explorer position
+  - hopefully added a fix to JSON parsing of corrupted patterns like '[object Object]'
 
 # Features
 

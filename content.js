@@ -54,12 +54,26 @@
     const COLLAPSE_KEY = 'snaplogicCollapsedGroups';
     const EMOJI_KEY = 'snaplogicPipelineEmojis';
     
+    // Check if extension context is still valid
+    function isExtensionContextValid() {
+        try {
+            return !!(chrome && chrome.runtime && chrome.runtime.id && chrome.storage);
+        } catch (error) {
+            return false;
+        }
+    }
+    
     // Storage helper functions for persistent data
     function getSetting(key, defaultValue = null) {
         return new Promise((resolve) => {
             try {
+                // Check if extension context is still valid
+                if (!chrome || !chrome.storage || !chrome.runtime) {
+                    throw new Error('Extension context invalidated');
+                }
+                
                 chrome.storage.sync.get([key], (result) => {
-                    if (chrome.runtime.lastError) {
+                    if (chrome.runtime.lastError || !chrome.runtime) {
                         // Fallback to localStorage
                         const localValue = localStorage.getItem(key);
                         resolve(localValue ? JSON.parse(localValue) : defaultValue);
@@ -68,9 +82,13 @@
                     }
                 });
             } catch (error) {
-                // Fallback to localStorage
-                const localValue = localStorage.getItem(key);
-                resolve(localValue ? JSON.parse(localValue) : defaultValue);
+                // Extension context invalidated or other error - fallback to localStorage
+                try {
+                    const localValue = localStorage.getItem(key);
+                    resolve(localValue ? JSON.parse(localValue) : defaultValue);
+                } catch (parseError) {
+                    resolve(defaultValue);
+                }
             }
         });
     }
@@ -78,16 +96,29 @@
     function setSetting(key, value) {
         return new Promise((resolve) => {
             try {
+                // Check if extension context is still valid
+                if (!chrome || !chrome.storage || !chrome.runtime) {
+                    throw new Error('Extension context invalidated');
+                }
+                
                 chrome.storage.sync.set({ [key]: value }, () => {
-                    if (chrome.runtime.lastError) {
+                    if (chrome.runtime.lastError || !chrome.runtime) {
                         // Fallback to localStorage
-                        localStorage.setItem(key, JSON.stringify(value));
+                        try {
+                            localStorage.setItem(key, JSON.stringify(value));
+                        } catch (error) {
+                            // Ignore localStorage errors
+                        }
                     }
                     resolve();
                 });
             } catch (error) {
-                // Fallback to localStorage
-                localStorage.setItem(key, JSON.stringify(value));
+                // Extension context invalidated or other error - fallback to localStorage
+                try {
+                    localStorage.setItem(key, JSON.stringify(value));
+                } catch (localError) {
+                    // Ignore localStorage errors
+                }
                 resolve();
             }
         });
@@ -211,7 +242,73 @@
                 // Clean up everything when disabling
                 cleanup();
             }
+        } else if (request.action === 'resetPosition') {
+            // Reset position and dock state to default
+            const sidebar = document.getElementById('pipeline-sidebar');
+            if (sidebar) {
+                // Calculate default position (same logic as createSidebar)
+                const sidebarWidth = parseInt(sidebar.style.width) || 400;
+                const rightPosition = window.innerWidth - sidebarWidth - 20;
+                const defaultLeft = `${Math.max(20, rightPosition)}px`;
+                const defaultTop = '100px';
+                
+                // Apply default position
+                sidebar.style.left = defaultLeft;
+                sidebar.style.top = defaultTop;
+                
+                // Reset to undocked state
+                sidebar.style.position = 'fixed'; // Ensure it's undocked
+                
+                // Save default position to both localStorage and chrome.storage
+                const defaultPosition = {
+                    left: defaultLeft,
+                    top: defaultTop
+                };
+                localStorage.setItem('snaplogicSidebarPosition', JSON.stringify(defaultPosition));
+                
+                // Reset dock state to false (undocked)
+                localStorage.setItem('snaplogicSidebarDocked', 'false');
+                
+                // Clear any saved previous positions that might be problematic
+                localStorage.removeItem('snaplogicSidebarPreviousPosition');
+                localStorage.removeItem('snaplogicSidebarPreviousState');
+                
+                // Update chrome.storage
+                if (chrome.storage && chrome.storage.sync) {
+                    chrome.storage.sync.set({
+                        'snaplogicSidebarPosition': JSON.stringify(defaultPosition),
+                        'snaplogicSidebarDocked': 'false'
+                    }).then(() => {
+                        // Also clear previous positions from chrome.storage
+                        chrome.storage.sync.remove(['snaplogicSidebarPreviousPosition', 'snaplogicSidebarPreviousState']);
+                    }).catch(() => {});
+                }
+                
+                // Update dock button if it exists - try multiple selectors to find it
+                const dockBtn = sidebar.querySelector('[title*="Dock"]') || 
+                              sidebar.querySelector('[title*="Undock"]') || 
+                              sidebar.querySelector('[title*="Restore Position"]') ||
+                              sidebar.querySelector('button[title*="⇊"]') ||
+                              sidebar.querySelector('button[title*="⇈"]');
+                if (dockBtn) {
+                    dockBtn.textContent = '⇊';
+                    // Get dock position preference and set appropriate title
+                    if (chrome.storage && chrome.storage.sync) {
+                        chrome.storage.sync.get(['dockPosition'], (result) => {
+                            const dockPosition = result.dockPosition || 'bottom-right';
+                            dockBtn.title = dockPosition === 'bottom-left' ? 'Dock to Bottom Left' : 'Dock to Bottom Right';
+                        });
+                    } else {
+                        dockBtn.title = 'Dock to Bottom Right'; // Default fallback
+                    }
+                }
+                
+                sendResponse({ success: true });
+            } else {
+                sendResponse({ success: false, error: 'Sidebar not found' });
+            }
         }
+        return true; // Keep message channel open for async response
     });
     
     // Default bullet point for pipelines
@@ -303,7 +400,225 @@
         return button;
     }
 
-    function createPipelineItem(pipeline, activeId, isProjectView = false) {
+    // Context menu functionality for pipeline management
+    function createPipelineContextMenu(pipeline, allPipelines, currentIndex) {
+        // Remove any existing context menu
+        const existingMenu = document.getElementById('pipeline-context-menu');
+        if (existingMenu) {
+            existingMenu.remove();
+        }
+
+        const menu = document.createElement('div');
+        menu.id = 'pipeline-context-menu';
+        menu.style.cssText = `
+            position: fixed;
+            background: white;
+            border: 1px solid #dadce0;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            z-index: 10000;
+            min-width: 200px;
+            font-size: 13px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        `;
+
+        const menuItems = [
+            {
+                text: '❌ Close this pipeline',
+                action: () => closePipeline(pipeline)
+            },
+            {
+                text: '⬅️ Close all to the left',
+                action: () => closePipelinesInRange(allPipelines, 0, currentIndex - 1),
+                disabled: currentIndex === 0
+            },
+            {
+                text: '➡️ Close all to the right', 
+                action: () => closePipelinesInRange(allPipelines, currentIndex + 1, allPipelines.length - 1),
+                disabled: currentIndex === allPipelines.length - 1
+            },
+            {
+                text: '📌 Close all except this',
+                action: () => closeAllExcept(allPipelines, pipeline),
+                disabled: allPipelines.length <= 1
+            },
+            {
+                text: '🗑️ Close all pipelines',
+                action: () => closeAllPipelines(allPipelines),
+                style: 'border-top: 1px solid #e8eaed; margin-top: 4px; padding-top: 4px;'
+            }
+        ];
+
+        menuItems.forEach((menuItem, index) => {
+            const item = document.createElement('div');
+            item.textContent = menuItem.text;
+            item.style.cssText = `
+                padding: 8px 12px;
+                cursor: ${menuItem.disabled ? 'not-allowed' : 'pointer'};
+                color: ${menuItem.disabled ? '#9aa0a6' : '#202124'};
+                opacity: ${menuItem.disabled ? '0.5' : '1'};
+                ${menuItem.style || ''}
+            `;
+
+            if (!menuItem.disabled) {
+                item.addEventListener('mouseenter', () => {
+                    item.style.backgroundColor = '#f8f9fa';
+                });
+                item.addEventListener('mouseleave', () => {
+                    item.style.backgroundColor = 'white';
+                });
+                item.addEventListener('click', () => {
+                    menuItem.action();
+                    menu.remove();
+                });
+            }
+
+            menu.appendChild(item);
+        });
+
+        return menu;
+    }
+
+    // Pipeline closing utilities
+    function closePipeline(pipeline) {
+        try {
+            // First, try to activate/focus the pipeline tab to ensure proper state
+            if (pipeline.element && pipeline.element.click) {
+                pipeline.element.click();
+                
+                // Small delay to let SnapLogic update its internal state
+                setTimeout(() => {
+                    const closeButton = pipeline.element.querySelector('.sl-shell-x');
+                    if (closeButton) {
+                        closeButton.click();
+                    }
+                }, 50);
+            } else {
+                // Fallback to direct close button click
+                const closeButton = pipeline.element.querySelector('.sl-shell-x');
+                if (closeButton) {
+                    closeButton.click();
+                }
+            }
+        } catch (error) {
+            console.warn('Error closing pipeline:', pipeline.title, error);
+            // Try fallback method
+            try {
+                const closeButton = document.querySelector(`[data-snode-id="${pipeline.id}"] .sl-shell-x`);
+                if (closeButton) {
+                    closeButton.click();
+                }
+            } catch (fallbackError) {
+                console.error('Fallback close also failed for:', pipeline.title, fallbackError);
+            }
+        }
+    }
+
+    function closePipelinesInRange(pipelines, startIndex, endIndex) {
+        // Create a list of pipelines to close with their IDs for safer reference
+        const pipelinesToClose = [];
+        for (let i = startIndex; i <= endIndex && i < pipelines.length; i++) {
+            if (pipelines[i]) {
+                pipelinesToClose.push(pipelines[i]);
+            }
+        }
+        
+        // Close pipelines with delays to allow DOM updates
+        closePipelinesWithDelay(pipelinesToClose);
+    }
+
+    function closeAllExcept(pipelines, keepPipeline) {
+        const pipelinesToClose = pipelines.filter(pipeline => pipeline.id !== keepPipeline.id);
+        closePipelinesWithDelay(pipelinesToClose);
+    }
+
+    function closeAllPipelines(pipelines) {
+        closePipelinesWithDelay([...pipelines]); // Create a copy of the array
+    }
+
+    // Helper function to close multiple pipelines with delays
+    function closePipelinesWithDelay(pipelinesToClose) {
+        if (pipelinesToClose.length === 0) return;
+        
+        // Close pipelines one by one with longer delays and more robust checking
+        let closedCount = 0;
+        
+        function closeNextPipeline(index) {
+            if (index >= pipelinesToClose.length) {
+                return;
+            }
+            
+            const pipeline = pipelinesToClose[index];
+            
+            // Re-query the pipeline element to get fresh state
+            const currentElement = document.querySelector(`[data-snode-id="${pipeline.id}"]`);
+            if (!currentElement) {
+                // Pipeline no longer exists (already closed)
+                closedCount++;
+                setTimeout(() => closeNextPipeline(index + 1), 300);
+                return;
+            }
+            
+            // Find the close button from the fresh element
+            const closeButton = currentElement.querySelector('.sl-shell-x');
+            if (!closeButton) {
+                setTimeout(() => closeNextPipeline(index + 1), 300);
+                return;
+            }
+            
+            try {
+                // First activate the pipeline to ensure proper SnapLogic state
+                currentElement.click();
+                
+                // Wait a bit for SnapLogic to update its state, then close
+                setTimeout(() => {
+                    try {
+                        // Re-query in case DOM changed
+                        const freshElement = document.querySelector(`[data-snode-id="${pipeline.id}"]`);
+                        const freshCloseButton = freshElement?.querySelector('.sl-shell-x');
+                        
+                        if (freshCloseButton) {
+                            freshCloseButton.focus();
+                            freshCloseButton.click();
+                            
+                            // Also try dispatching a proper mouse event as backup
+                            const clickEvent = new MouseEvent('click', {
+                                bubbles: true,
+                                cancelable: true,
+                                view: window
+                            });
+                            freshCloseButton.dispatchEvent(clickEvent);
+                        }
+                    } catch (closeError) {
+                        console.warn('Error in delayed close for:', pipeline.title, closeError);
+                    }
+                    
+                    closedCount++;
+                    
+                    // Wait longer between closes to give SnapLogic time to process
+                    setTimeout(() => closeNextPipeline(index + 1), 750); // Increased to 750ms
+                }, 100); // Wait 100ms after activation before closing
+                
+            } catch (error) {
+                console.warn('Error activating pipeline before close:', pipeline.title, error);
+                // Fallback to direct close without activation
+                setTimeout(() => {
+                    try {
+                        closeButton.click();
+                    } catch (fallbackError) {
+                        console.error('Fallback close failed for:', pipeline.title, fallbackError);
+                    }
+                    closedCount++;
+                    setTimeout(() => closeNextPipeline(index + 1), 750);
+                }, 100);
+            }
+        }
+        
+        // Start the closing process
+        closeNextPipeline(0);
+    }
+
+    function createPipelineItem(pipeline, activeId, isProjectView = false, allPipelines = []) {
         const name = pipeline.title.split('/').pop();
         const emoji = getPipelineEmoji(pipeline.id);
         const item = document.createElement('div');
@@ -440,6 +755,73 @@
         item.onclick = (e) => {
             if (e.target === emojiContainer || e.target === closeBtn) return;
             pipeline.element.click();
+        };
+
+        // Add context menu for pipeline management (only in flat view)
+        item.oncontextmenu = (e) => {
+            if (e.target === emojiContainer) return; // Let emoji picker handle its own context menu
+            if (isProjectView) return; // Only enable in flat view
+            
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Get current pipeline list and find index
+            const currentPipelines = allPipelines.filter(p => {
+                const name = p.title?.split('/').pop();
+                const searchValue = document.querySelector('#pipeline-sidebar input[type="text"]')?.value || '';
+                return name && name.toLowerCase().includes(searchValue.toLowerCase());
+            });
+            const currentIndex = currentPipelines.findIndex(p => p.id === pipeline.id);
+            
+            // Create and show context menu
+            const menu = createPipelineContextMenu(pipeline, currentPipelines, currentIndex);
+            menu.style.left = e.pageX + 'px';
+            menu.style.top = e.pageY + 'px';
+            
+            document.body.appendChild(menu);
+            
+            // Close menu when clicking outside, right-clicking, or pressing Escape
+            const closeMenu = (event) => {
+                // Always check if menu still exists first
+                if (!document.body.contains(menu)) {
+                    document.removeEventListener('click', closeMenu, true);
+                    document.removeEventListener('contextmenu', closeMenu, true);
+                    document.removeEventListener('keydown', closeMenu, true);
+                    return;
+                }
+                
+                if (event.type === 'keydown' && event.key === 'Escape') {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu, true);
+                    document.removeEventListener('contextmenu', closeMenu, true);
+                    document.removeEventListener('keydown', closeMenu, true);
+                    return;
+                }
+                
+                if (event.type === 'contextmenu') {
+                    event.preventDefault();
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu, true);
+                    document.removeEventListener('contextmenu', closeMenu, true);
+                    document.removeEventListener('keydown', closeMenu, true);
+                    return;
+                }
+                
+                // For click events, check if click was outside the menu
+                if (event.type === 'click' && !menu.contains(event.target)) {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu, true);
+                    document.removeEventListener('contextmenu', closeMenu, true);
+                    document.removeEventListener('keydown', closeMenu, true);
+                }
+            };
+            
+            // Add event listeners for closing the menu - use capture phase for better reliability
+            setTimeout(() => {
+                document.addEventListener('click', closeMenu, true);
+                document.addEventListener('contextmenu', closeMenu, true);
+                document.addEventListener('keydown', closeMenu, true);
+            }, 0);
         };
         
         closeBtn.onclick = (e) => {
@@ -1457,7 +1839,25 @@
             overflow: hidden;
         `;
 
-        const savedPos = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        const savedPos = (() => {
+            try {
+                const posData = localStorage.getItem(STORAGE_KEY);
+                if (!posData || posData === 'undefined' || posData === 'null') {
+                    return null;
+                }
+                // Check if it's already an object string (corrupted data)
+                if (posData === '[object Object]') {
+                    console.warn('Found corrupted position data, clearing it');
+                    localStorage.removeItem(STORAGE_KEY);
+                    return null;
+                }
+                return JSON.parse(posData);
+            } catch (error) {
+                console.warn('Error parsing saved position, clearing corrupted data:', error);
+                localStorage.removeItem(STORAGE_KEY);
+                return null;
+            }
+        })();
         if (savedPos) {
             sidebar.style.left = savedPos.left;
             sidebar.style.top = savedPos.top;
@@ -1477,9 +1877,31 @@
                 const currentSidebar = document.getElementById(SIDEBAR_ID);
                 if (currentSidebar && !savedPos) {
                     // Only update if we didn't have a local position (avoids overriding user's current session position)
-                    const posData = JSON.parse(chromePosition);
-                    currentSidebar.style.left = posData.left;
-                    currentSidebar.style.top = posData.top;
+                    try {
+                        // Defensive parsing - check if it's already an object or corrupted data
+                        if (typeof chromePosition === 'object') {
+                            // chromePosition is already an object, use it directly
+                            if (chromePosition.left && chromePosition.top) {
+                                currentSidebar.style.left = chromePosition.left;
+                                currentSidebar.style.top = chromePosition.top;
+                            }
+                        } else if (typeof chromePosition === 'string') {
+                            // Check for corrupted data before parsing
+                            if (chromePosition === '[object Object]' || chromePosition === 'undefined' || chromePosition === 'null') {
+                                console.warn('Found corrupted chrome position data, ignoring');
+                                return;
+                            }
+                            const posData = JSON.parse(chromePosition);
+                            if (posData && posData.left && posData.top) {
+                                currentSidebar.style.left = posData.left;
+                                currentSidebar.style.top = posData.top;
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Error parsing chrome position data:', error);
+                        // Clear corrupted data from chrome storage
+                        setSetting(STORAGE_KEY, null).catch(() => {});
+                    }
                 }
             }
         }).catch(() => {
@@ -1930,7 +2352,20 @@
             });
         };
 
-        const collapsedGroups = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}');
+        const collapsedGroups = (() => {
+            try {
+                const groupsData = localStorage.getItem(COLLAPSE_KEY) || '{}';
+                if (groupsData === '[object Object]') {
+                    localStorage.removeItem(COLLAPSE_KEY);
+                    return {};
+                }
+                return JSON.parse(groupsData);
+            } catch (error) {
+                console.warn('Error parsing collapsed groups, using empty object:', error);
+                localStorage.removeItem(COLLAPSE_KEY);
+                return {};
+            }
+        })();
 
         function renderContent(filter = '') {
             content.innerHTML = '';
@@ -1941,7 +2376,7 @@
                         return name && name.toLowerCase().includes(filter.toLowerCase());
                     })
                     .forEach(p => {
-                        const item = createPipelineItem(p, activeId, false);
+                        const item = createPipelineItem(p, activeId, false, pipelines);
                         content.appendChild(item);
                     });
             } else {
@@ -1970,7 +2405,14 @@
                     
                     const groupHeader = document.createElement('div');
                     // Get current collapsed state from localStorage
-                    const currentCollapsedGroups = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}');
+                    const currentCollapsedGroups = (() => {
+                        try {
+                            const groupsData = localStorage.getItem(COLLAPSE_KEY) || '{}';
+                            return groupsData === '[object Object]' ? {} : JSON.parse(groupsData);
+                        } catch (error) {
+                            return {};
+                        }
+                    })();
                     let isCollapsed = currentCollapsedGroups[group];
                     
                     // Auto-expand groups when searching if they have matches
@@ -1982,7 +2424,14 @@
                     groupHeader.innerHTML = `<span style="cursor:pointer;">${isCollapsed ? '▶' : '▼'} ${group}${filter.trim() && matchingItems.length > 0 ? ` (${matchingItems.length} match${matchingItems.length === 1 ? '' : 'es'})` : ''}</span>`;
                     groupHeader.style = 'font-weight: bold; margin-top: 8px; margin-bottom: 3px; font-size: 13px;';
                     groupHeader.onclick = () => {
-                        const updatedCollapsedGroups = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}');
+                        const updatedCollapsedGroups = (() => {
+                            try {
+                                const groupsData = localStorage.getItem(COLLAPSE_KEY) || '{}';
+                                return groupsData === '[object Object]' ? {} : JSON.parse(groupsData);
+                            } catch (error) {
+                                return {};
+                            }
+                        })();
                         updatedCollapsedGroups[group] = !updatedCollapsedGroups[group];
                         localStorage.setItem(COLLAPSE_KEY, JSON.stringify(updatedCollapsedGroups));
                         renderContent(searchBox.value);
@@ -1992,7 +2441,7 @@
                     if (!isCollapsed) {
                         const itemsToShow = filter.trim() ? matchingItems : items;
                         itemsToShow.forEach(p => {
-                            const item = createPipelineItem(p, activeId, true);
+                            const item = createPipelineItem(p, activeId, true, pipelines);
                             content.appendChild(item);
                         });
                     }
@@ -2204,8 +2653,16 @@
                 console.log('Pipeline Explorer: No valid pipelines found, skipping sidebar creation');
             }
         } catch (error) {
-            console.error('Pipeline Explorer: Error in updateSidebar, likely during SnapLogic state transition:', error);
-            // Don't throw the error to avoid interfering with SnapLogic
+            // Handle different types of errors appropriately
+            if (error.message && error.message.includes('Extension context invalidated')) {
+                console.log('Pipeline Explorer: Extension context invalidated, stopping operations');
+                // Clean up any ongoing operations
+                cleanup();
+                return;
+            } else {
+                console.error('Pipeline Explorer: Error in updateSidebar, likely during SnapLogic state transition:', error);
+                // Don't throw the error to avoid interfering with SnapLogic
+            }
         }
     }
 
@@ -2290,8 +2747,18 @@
     }
 
     async function init() {
-        // Migrate existing localStorage data to chrome.storage.sync
-        await migrateStorageData();
+        // Check if extension context is still valid before initializing
+        if (!isExtensionContextValid()) {
+            console.log('Pipeline Explorer: Extension context invalidated, skipping initialization');
+            return;
+        }
+        
+        try {
+            // Migrate existing localStorage data to chrome.storage.sync
+            await migrateStorageData();
+        } catch (error) {
+            console.warn('Pipeline Explorer: Migration failed, continuing with localStorage only:', error);
+        }
         
         // Start monitoring for SnapLogic transitions
         detectSnapLogicTransition();
@@ -2301,6 +2768,13 @@
         const maxAttempts = 30; // 30 seconds max wait
         
         const interval = setInterval(() => {
+            // Check if extension context is still valid
+            if (!isExtensionContextValid()) {
+                clearInterval(interval);
+                console.log('Pipeline Explorer: Extension context invalidated during initialization');
+                return;
+            }
+            
             attempts++;
             const tabContainer = document.querySelector('.sl-pipeline-tabs');
             
